@@ -1,0 +1,16 @@
+Task1 : Geocoding
+
+Clean the data
+
+We create a data frame called nyc_man to store the cleaned data from the nyc data. In order to clean data, we use two self-defined functions “substrRight” and “th”. "substrRight" is a function that returns last n letters. “th” function returns two values: 1. boolean value whether a text 'x' has the 'pattern'. 2. the location where the pattern starts in the text 'x'.
+
+We first convert the address in nyc to lower case. Then, we replace all kinds of abbreviations in the address with its original form. We replace the following: 1. Directions with its full name (west, south…) 2. number words (first or 1st…) with numbers (1, 2, …) 3. All abbreviations of “street”, “avenue”, “broadway”, “square”, “park”, “central park west”, “drive”, “place”, “road” “lane” “circle” and “plaza”
+4. We also take care of some space issues in the address
+
+After the above steps, we obtain a clean data that can be matched with the pluto data. We then match the address from nyc_man and pluto_xy by inner_join, get the longitude and latitude of the locations and save the results to a data frame called "combined".
+
+Then we create fake data for the Central Park. Since the Central Park is a parallelogram, we capture the location details (longitudes and latitudes) of the vertices of this parallelogram. Then we write a function in order to determine if a data point falls into the parallelogram. We randomly generate 30000 data for the latitudes and 30000 data for the longitude and make sure they fall into the between of the maximum and minimum of longitude and latitude. After that, we filter and select the data that fall into the parallelogram to be our fake data. Then we update the combine data by adding the fake data for Central Park and save as the file "precinct.Rdata". After the data cleaning process, we successfully obtain accurate data from the messy data set.
+
+Task2: Recreating NYC’s Police Precincts
+
+We have already cleaned the data and created fake data for the Central Park. Based on these two kinds of data, we create a xgboost (gradient boosting tree) and a knn (k nearest neighbor) model. We find that knn yields a slightly better accuracy than xgboost and runs much more faster. So the code for xgboost is commented out, but still keep for a reference. For knn, we use the function “knn” from the library “class”. However, since there are many equal distances and this results in many ties. So we added a tiny little bit of noise to the data. We also have tried some other models, like glm and multinorm, although they don't seem promising. Then we predict the test data based on the model, and you can see the visualizations based on our predictions in the following part. In the end, we polygonise the raster and save it to "precincts.json" with recreated boundaries
