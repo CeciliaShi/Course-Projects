@@ -1,0 +1,92 @@
+---
+title: "uber.rmd"
+output: pdf_document
+---
+##### TASK1
+```{r}
+library(ggplot2)
+load(file="combined.Rdata")
+taxi_pickups = combined$taxi_pickups
+taxi_dropoffs = combined$taxi_dropoffs
+uber_pickups = combined$uber_pickups
+taxi_pickups_rushhour = combined$taxi_pickups_rushhour
+taxi_pickups_nonrush = combined$taxi_pickups_nonrush
+taxi_dropoffs_rushhour = combined$taxi_dropoffs_rushhour
+taxi_dropoffs_nonrush = combined$taxi_dropoffs_nonrush
+uber_pickups_rushhour = combined$uber_pickups_rushhour
+uber_pickups_nonrush = combined$uber_pickups_nonrush
+
+# a plot of all yellow and green cab pickups together (with points colored by cab type)
+taxi_colors = c("#009E73","#F0E442")
+ggplot(taxi_pickups, aes(x = long, y = lat, alpha = log(n)/max(log(n)), color=taxi)) + 
+  ggtitle("Taxi Pickups")+
+  theme(plot.title = element_text(size = 20))+
+  geom_point(size=0.05) + 
+  theme_bw() + 
+  scale_color_manual(values=taxi_colors)
+
+# a plot of all yellow and green cab dropoffs together (with points colored by cab type)
+ggplot(taxi_dropoffs, aes(x=long, y=lat, alpha = log(n)/max(log(n)), color=taxi)) + 
+  ggtitle("Taxi Dropoffs")+
+  theme(plot.title = element_text(size = 20))+
+  geom_point(size=0.05) + 
+  theme_bw() + 
+  scale_color_manual(values=taxi_colors)
+
+# a plot of uber pickups
+ggplot(uber_pickups, aes(x=longitude, y=latitude, alpha = log(n)/log(max(n)))) + 
+  ggtitle("Uber Pickups")+
+  theme(plot.title = element_text(size = 20))+
+  geom_point(size=0.05) + 
+  theme_bw()
+```
+
+##### TASK2
+  For all of the three groups of plots, it can be observed that pickups and dropoffs for non-rush hours are more spread out than those for rush hours. Specifically, pickups and dropoffs are more concentrated on the city center during the rush hours. It also can be seen that the pattern in TASK1 that dropoffs are more spread out than pickups is also obvious here, if we compare the pickups and dropoffs.
+
+  Therefore, it can be inferred that New Yorkers tend to take cabs to transit around the city center during rush hours, while they tend to transit to a larger range of places during non-rush hours.
+
+```{r}
+# Taxi pickups
+ggplot(taxi_pickups_rushhour, aes(x=long, y=lat, alpha = log(n)/max(log(n)), color=taxi)) + 
+  ggtitle("Taxi Pickups at Rush Hour")+
+  theme(plot.title = element_text(size = 20))+
+  geom_point(size=0.05) + 
+  theme_bw() + 
+  scale_color_manual(values=taxi_colors)
+
+ggplot(taxi_pickups_nonrush, aes(x=long, y=lat, alpha = log(n)/max(log(n)), color=taxi)) + 
+  ggtitle("Taxi Pickups at Nonrush Hour")+
+  theme(plot.title = element_text(size = 20))+
+  geom_point(size=0.05) + 
+  theme_bw() + 
+  scale_color_manual(values=taxi_colors)
+
+# Taxi dropoffs
+ggplot(taxi_dropoffs_rushhour, aes(x=long, y=lat, alpha = log(n)/max(log(n)), color=taxi)) + 
+  ggtitle("Taxi Dropoffs at Rush Hour")+
+  theme(plot.title = element_text(size = 20))+
+  geom_point(size=0.05) + 
+  theme_bw() + 
+  scale_color_manual(values=taxi_colors)
+
+ggplot(taxi_dropoffs_nonrush, aes(x=long, y=lat, alpha = log(n)/max(log(n)), color=taxi)) + 
+  ggtitle("Taxi Dropoffs at Nonrush Hour")+
+  theme(plot.title = element_text(size = 20))+
+  geom_point(size=0.05) + 
+  theme_bw() + 
+  scale_color_manual(values=taxi_colors)
+
+# uber pickups
+ggplot(uber_pickups_rushhour, aes(x=longitude, y=latitude, alpha = log(n)/log(max(n)))) + 
+  ggtitle("Uber Pickups Rush Hour")+
+  theme(plot.title = element_text(size = 20))+
+  geom_point(size=0.05) + 
+  theme_bw()
+
+ggplot(uber_pickups_nonrush, aes(x=longitude, y=latitude, alpha = log(n)/log(max(n)))) + 
+  ggtitle("Uber Pickups Nonrush")+
+  theme(plot.title = element_text(size = 20))+
+  geom_point(size=0.05) + 
+  theme_bw()
+```
