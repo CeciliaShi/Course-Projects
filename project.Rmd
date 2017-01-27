@@ -1,0 +1,383 @@
+---
+title: "Final_Project"
+output: html_document
+---
+Write-up: We are interested in the national house prices across counties in the mainland United States. Therefore, we do visualization on shiny app to help readers access those data interactively. Specifically, we first scrape national housing median price data at the state level from Trulia. com. Since we are particularly interested in how factors like income, population, property tax rate, crime rate and education level would be like in a specific region with certain housing price (according to our preliminary linear regression analysis, those variables would significantly influence the average housing prices), we also scrape those data from several websites. As a result, when a house buyer considers his or her housing plan, he can use our product for reference. As for our variables: income: median household income in 2014; population: population for a state in 2014; property tax rate: annual tax rate for a house in 2014; crime rate: violate crime count in every 100k population in 2014; education level: the percentage of people who hold a bachelor degree in a state in 2014.
+
+For our shiny app, we created an interactive map at the county level across the country for average listing prices for housing. We also add features as “pop-up”, that is, when we click on the specific region in the map, the data on average price, county name and state name will be presented. And we can also zoom in and zoom out as we want.
+
+Then, we also conduct visualizations for other five variables at state level: income, population, property tax rate, crime rate and education level. We set widgets to allow the users to choose the variable of interests, and a map related to those information will be displayed.
+
+
+### Scrape House Price
+```{r setup, include=FALSE}
+
+library(rvest)
+library(datasets)
+library(stringr)
+library(dplyr)
+
+# scrape house prices for each county in the US
+names = state.name
+name = gsub(" ", "_", names)
+site = "https://www.trulia.com/home_prices/"
+url = paste0(site, name, "/")
+
+# add district of columbia since it is not in the list of state names
+dc = paste0(site, "District_Of_Columbia/")
+url = c(url, dc)
+names = c(names, "District of Columbia")
+COUNTY = PRICE = STATE = NULL
+
+# scrape from each state
+for(i in seq_along(url))
+{
+  page = read_html(url[i])
+  county = page %>%
+    html_nodes("#heatmap_table a") %>%
+    html_text()
+  
+  price = page %>%
+    html_nodes("td:nth-child(2)") %>%
+    html_text() 
+  price = c(price[substr(price,1,1) == "$"], price[substr(price,1,1) == "-"])
+  
+  state = rep(names[i], length(price))
+  
+  COUNTY = c(COUNTY, county)
+  PRICE = c(PRICE, price)
+  STATE = c(STATE, state)
+}
+
+PRICE = PRICE %>% 
+  str_replace_all("," , "") %>%
+  sub("\\$", "", .) %>%
+  sub("-", NA, .) %>%
+  as.numeric()
+
+price_list = data.frame(STATE, COUNTY, PRICE)
+full_list = price_list[!is.na(price_list[, 2]) ,]
+
+# average house price in each state
+average = read_html("https://www.trulia.com/home_prices/")
+state = average %>%
+  html_nodes("#heatmap_table a") %>%
+  html_text()
+
+average_price = average %>%
+  html_nodes("td:nth-child(2)") %>%
+  html_text() %>%
+  .[substr(.,1,1) == "$"] %>% 
+  str_replace_all("," , "") %>%
+  sub("\\$", "", .) %>%
+  sub("-", NA, .) %>%
+  as.numeric()
+
+full_list_average = data.frame(state, average_price)
+full_list_average$state = str_replace_all(full_list_average$state, "District Of Columbia", "District of Columbia")
+
+# education level in each state
+url1 = "https://en.wikipedia.org/wiki/List_of_U.S._states_by_educational_attainment"
+education = url1 %>%
+  read_html() %>%
+  html_nodes(xpath = '//*[@id="mw-content-text"]/table[2]') %>%
+  html_table() %>%
+  .[[1]]
+
+names(education)[4] = "percentage_higher_education"
+bachelor = education %>% 
+  .[!duplicated(names(.))] %>%
+  rename(., state = State) %>%
+  select(state, percentage_higher_education)
+
+bachelor$percentage_higher_education = bachelor$percentage_higher_education %>%
+  str_replace_all("%" , "") %>%
+  as.numeric()/100
+
+# add median house income and population for each state
+url2 = "https://en.wikipedia.org/wiki/List_of_U.S._states_by_income"
+pages = read_html(url2)
+table = pages %>% 
+  html_nodes(xpath = '//*[@id="mw-content-text"]/table[4]') %>%
+  html_table() %>%
+  .[[1]] %>% 
+  filter(State != "United States" & State != "Puerto Rico")
+
+names(table)[4] = "income"
+names(table) = tolower(names(table))
+table$income = table$income %>%
+  gsub(',', '', .) %>%
+  gsub('\\$', '', .) %>%
+  as.numeric()
+  
+table$population = table$population %>% 
+  gsub(',', '', .) %>% 
+  as.numeric()
+income = table %>%
+  select(state, income, population)
+
+# add crime rate for each state
+url3 = "http://www.worldatlas.com/articles/the-most-dangerous-states-in-the-u-s.html"
+page = read_html(url3)
+crime = page %>%
+  html_nodes(xpath = '//*[@id="artReg-table"]/table') %>%
+  html_table() %>%
+  .[[1]]
+
+crime[, 1] = NULL
+colnames(crime) = c("state", "crime_rate")
+crime$state = str_replace_all(crime$state, "Massachussets", "Massachusetts")
+
+# property tax for each state
+url4 = "https://wallethub.com/edu/states-with-the-highest-and-lowest-property-taxes/11585/"
+page = read_html(url4)
+state = page %>%
+  html_nodes(".sortable td:nth-child(2)") %>%
+  html_text() %>% as.data.frame()
+
+tax_rate = page %>%
+  html_nodes(".sortable td:nth-child(3)") %>%
+  html_text() %>% as.data.frame()
+tax = cbind(state, tax_rate)
+colnames(tax) = c("state","tax_rate")
+
+# the original class for the two columns are factor; change them to be numeric and character respectively
+levels(tax$tax_rate)=str_replace_all(levels(tax$tax_rate), "%", "")
+tax$tax_rate=as.numeric(levels(tax$tax_rate))[tax$tax_rate]/100
+tax$state=as.character(levels(tax$state))[tax$state]
+
+# merge the variables into one data frame
+full_dataframe = left_join(full_list_average,crime) %>%
+  left_join(., bachelor) %>%
+  left_join(., tax) %>%
+  left_join(., income)
+```
+
+
+### Shiny App
+```{r setup, include=FALSE}
+library(shiny)
+library(ggplot2)
+library(DT)
+library(leaflet)
+library(maps)
+library(maptools)
+library(sp)
+library(rgeos)
+library(dplyr)
+library(RColorBrewer)
+
+#Change column names to merge later.
+data = full_list %>%
+  mutate(NAME = tolower(paste(STATE,COUNTY,sep=","))) %>%
+  select(NAME, PRICE)
+data2 = full_dataframe %>%
+  mutate(state = tolower(state))
+
+#load US map using map function
+mapState = map("state", fill = TRUE, plot = FALSE)
+mapCounty = map("county", fill = TRUE, plot = FALSE)
+
+#Make dataframes for state names
+temp = data.frame(NAME = mapCounty$names)
+temp2 = mapState$names %>% strsplit(.,":")
+temp2 = data.frame(NAME = unlist(lapply(temp2,function(x) x[1])))
+
+
+#Data for county-level house price
+#'col' is for color assignment, 'm.data' is the dataframe.
+#'col' is log tranformed because there are some outliers.
+col = log(data$PRICE[match(temp$NAME, data$NAME)])
+m.data = cbind(as.character(temp$NAME), exp(col))
+#'m.data' is for state-level data.
+m.data2 = data2[match(temp2$NAME, data2$state), ]
+m.data2$state = mapState$names
+
+#Color assignment for county-level house price
+pal <- colorBin(brewer.pal(9, "YlOrRd"), col, bins = 9)
+
+###Shiny App
+shinyApp(
+  ui = navbarPage("US HOUSING PRICE", id="nav",
+                  #We have two taps one for County-level, the other one for State-level
+                  tabPanel("County-level House Price",
+                           div(class="outer",
+                               leafletOutput("myMap"))),
+                  
+                  tabPanel("State-level House Price",
+                           fluidPage(
+                             sidebarLayout(
+                              sidebarPanel(
+                                #Sidebar for variables
+                                selectInput("panels","Panels:",
+                                             choices=names(m.data2)[-1]),
+                                #Checkbox for the table
+                                checkboxInput("table","Show the table",value = F),
+                                conditionalPanel(condition = "input.table==true",
+                        checkboxGroupInput('show_vars', 'Variables to show:',
+                           names(full_dataframe), selected = names(full_dataframe))
+                            )
+                              ),
+                              mainPanel(
+                                div(class="outer",
+                                    leafletOutput("myMap2")),
+                                DT::dataTableOutput('mytable1')
+                              )
+                           )))
+                 
+  ),
+                  server <- function(input, output, session) {
+                    #County-level Map
+                    output$myMap <- renderLeaflet({
+                      leaflet() %>% 
+                        addProviderTiles("Stamen.TonerLite",
+                                         options = providerTileOptions(noWrap = TRUE)) %>%
+                        addPolygons(data=mapCounty, fillOpacity = 0.7,
+                                    fillColor = ~pal(col), stroke = FALSE) %>%
+                        #Legend for the county-level map. 
+                        #Since the color assignment was done with log transformed data, we used transform option to
+                        #obtain the original data values.
+                        addLegend("bottomleft", pal = pal, values = data$PRICE[match(temp$NAME, data$NAME)],
+                                  labFormat = labelFormat(
+                                    prefix = '$', suffix = 'k',
+                                    transform = function(x) as.integer(exp(x)*0.001)))
+                    })
+                    
+                    ##Popups for click
+                    showPopup <- function(lat, lng) {
+                      #Store the latitude and longitude from the point where you click.
+                      point = as.data.frame(cbind(lng, lat)) %>% SpatialPoints()
+                      #Get whole mapCounty information
+                      mapCounty_sp = map2SpatialPolygons(mapCounty, IDs=mapCounty$names)
+                      #Get the map information of the point we clicked.
+                      i = point[mapCounty_sp,]
+                      #Cleaning the state names and county names
+                      selected = mapCounty_sp[i] %>%
+                        names() %>% strsplit(.,split=',') %>% unlist %>%
+                        strsplit(.,split=' ')
+                      
+                      state = paste(toupper(substr(selected[[1]],1,1)),substring(selected[[1]],2),sep="",collapse=" ")
+                      county = paste(toupper(substr(selected[[2]],1,1)),substring(selected[[2]],2),sep="",collapse=" ")
+                      
+                      #The values what the popup should show
+                      content <- as.character(tagList(
+                        paste("State: ", as.character(state)),
+                        tags$br(),
+                        paste("County: ", as.character(county)),
+                        tags$br(),
+                        sprintf("Average Sales Price: $%s", 
+                                formatC(as.numeric(
+                                  m.data[
+                                    which(m.data[,1] == names(mapCounty_sp[i])), 2]),
+                                  format = 'd', big.mark=','
+                                ))
+                      ))
+                      
+                      leafletProxy("myMap") %>% addPopups(lng, lat, content)
+                    }
+                    
+                    observe({
+                      leafletProxy("myMap") %>% clearPopups()
+                      event <- input$myMap_shape_click
+                      if (is.null(event))
+                        return()
+                      
+                      isolate({
+                        showPopup(event$lat, event$lng)
+                      })
+                    })
+                    
+                    
+                    
+                    #State-level map
+                    output$myMap2 <- renderLeaflet({
+                      
+                      #Assign the colors for the variable you chose from the sliderbar in the UI.
+                      col2 = as.numeric(m.data2[,input$panels])
+                      #If the variable has extreme large values, log transform is needed.
+                      if (input$panels %in% c("population","average_price")) col2 = log(col2)
+                      
+                      #Color assignment
+                      pal2 = colorBin(brewer.pal(9, "YlOrRd"), col2, bins = 9)
+                      
+                      #Legend for each variable
+                      #Population and Average_price takes integer values.
+                      if (input$panels %in% c("population","average_price")){
+                        leaflet() %>% 
+                        addProviderTiles("Stamen.TonerLite",
+                                         options = providerTileOptions(noWrap = TRUE)) %>%
+                        addPolygons(data=mapState, fillOpacity = 0.7,
+                                    fillColor = ~pal2(col2), stroke = FALSE) %>%
+                        addLegend("bottomleft", pal = pal2, values = m.data2[, input$panels],
+                                  labFormat = labelFormat(
+                                    prefix = ifelse(input$panels == "average_price", '$', ''), 
+                                    suffix = ifelse(input$panels == "average_price", 'k', ''),
+                                    transform = function(x) as.integer(exp(x)*
+                                                            ifelse(input$panels == "average_price", 0.001,1))))
+                      } else {
+                        #Legend for variables which does not have unit
+                        leaflet() %>% 
+                        addProviderTiles("Stamen.TonerLite",
+                                         options = providerTileOptions(noWrap = TRUE)) %>%
+                        addPolygons(data=mapState, fillOpacity = 0.7,
+                                    fillColor = ~pal2(col2), stroke = FALSE) %>%
+                        addLegend("bottomleft", pal = pal2, values = m.data2[, input$panels])
+                      }
+                    })
+                    
+                    #Popup for state-level map
+                    showPopup2 <- function(lat, lng) {
+                      
+                      point = as.data.frame(cbind(lng, lat)) %>% SpatialPoints()
+                      mapState_sp = map2SpatialPolygons(mapState, IDs=mapState$names)
+                      i = point[mapState_sp,]
+                      selected = mapState_sp[i] %>%
+                                 names() %>% strsplit(.,split=':') %>% unlist %>%
+                                 strsplit(.,split=' ')
+                      state = paste(toupper(substr(selected[[1]],1,1)),substring(selected[[1]],2),sep="",collapse=" ")
+                      
+                      #The content of the popup
+                      content <- as.character(tagList(
+                        paste("State: ", as.character(state)),
+                        tags$br(),
+                        #Different units for each variable.
+                        sprintf("%s: %s",
+                                input$panels,
+                                ifelse(input$panels %in% c("average_price","income"),
+                                        paste("$ ",formatC(as.numeric(
+                                          m.data2[
+                                          which(m.data2[,1] == names(mapState_sp[i])), input$panels]),
+                                          format = 'd', big.mark=',')),
+                                       ifelse(input$panels %in% "population",
+                                              formatC(as.numeric(
+                                                m.data2[
+                                                  which(m.data2[,1] == names(mapState_sp[i])), input$panels]),
+                                                format = 'd', big.mark=','),
+                                              m.data2[which(m.data2[,1] == names(mapState_sp[i])), input$panels])
+                                ))
+                      ))
+                      
+                      output$distTable= renderPlot
+                      
+                      leafletProxy("myMap2") %>% addPopups(lng, lat, content)
+                    }
+                    
+                    observe({
+                      leafletProxy("myMap2") %>% clearPopups()
+                      event <- input$myMap2_shape_click
+                      if (is.null(event))
+                        return()
+                      
+                      isolate({
+                        showPopup2(event$lat, event$lng)
+                      })
+                    })
+                  #Table Result.
+                  output$mytable1 <- DT::renderDataTable({
+                    if (input$table==TRUE){
+                      DT::datatable(full_dataframe[, input$show_vars, drop = FALSE])}
+  })
+
+                    
+})
+```
