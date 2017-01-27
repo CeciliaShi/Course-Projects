@@ -1,0 +1,318 @@
+---
+title: "Modeling Manhattan Precincts"
+output: html_notebook
+---
+##### Task1 : Geocoding
+##### Clean the data
+We create a data frame called nyc_man to store the cleaned data from the nyc data. In order to clean data, we use two self-defined functions “substrRight” and “th”. "substrRight" is a function that returns last n letters. “th” function returns two values: 1. boolean value whether a text 'x' has the 'pattern'. 2. the location where the pattern starts in the text 'x'. 
+
+We first convert the address in nyc to lower case. Then, we replace all kinds of abbreviations in the address with its original form. We replace the following:
+1.	Directions with its full name (west, south…)
+2.	number words (first or 1st…) with numbers (1, 2, …)
+3.	All abbreviations of “street”, “avenue”, “broadway”, “square”, “park”, “central park west”, “drive”, “place”, “road” “lane” “circle” and “plaza”  
+4.	We also take care of some space issues in the address
+
+After the above steps, we obtain a clean data that can be matched with the pluto data. We then match the address from nyc_man and pluto_xy by inner_join, get the longitude and latitude of the locations and save the results to a data frame called "combined".
+
+Then we create fake data for the Central Park. Since the Central Park is a parallelogram, we capture the location details (longitudes and latitudes) of the vertices of this parallelogram. Then we write a function in order to determine if a data point falls into the parallelogram. We randomly generate 30000 data for the latitudes and 30000 data for the longitude and make sure they fall into the between of the maximum and minimum of longitude and latitude. After that, we filter and select the data that fall into the parallelogram to be our fake data. Then we update the combine data by adding the fake data for Central Park and save as the file "precinct.Rdata". After the data cleaning process, we successfully obtain accurate data from the messy data set.
+
+
+##### Task2: Recreating NYC’s Police Precincts
+We have already cleaned the data and created fake data for the Central Park. Based on these two kinds of data, we create a xgboost (gradient boosting tree) and a knn (k nearest neighbor) model. We find that knn yields a slightly better accuracy than xgboost and runs much more faster. So the code for xgboost is commented out, but still keep for a reference. For knn, we use the function “knn” from the library “class”. However, since there are many equal distances and this results in many ties. So we added a tiny little bit of noise to the data. We also have tried some other models, like glm and multinorm, although they don't seem promising. Then we predict the test data based on the model, and you can see the visualizations based on our predictions in the following part.
+In the end, we polygonise the raster and save it to "precincts.json" with recreated boundaries
+
+
+## merge data
+```{r}
+library(dplyr)
+library(ggplot2)
+library(sf)
+library(stringr)
+library(magrittr)
+
+load("/data/nyc_parking/NYParkingViolations.Rdata")
+
+## Get pluto data
+pluto = st_read("/data/nyc_parking/pluto_manhattan/MNMapPLUTO.shp") %>%
+  select(Address, geometry)
+
+pluto_xy = cbind(
+  select(pluto, Address),
+  st_centroid(pluto) %>% 
+    unlist() %>% 
+    matrix(ncol=2,byrow=TRUE)
+) %>% 
+  setNames(c("address","x","y")) %>%
+  tbl_df()
+
+ggplot(pluto_xy, aes(x=x,y=y)) + 
+  geom_point(alpha=0.1,size=0.1) +
+  theme_bw()
+
+## Merge data
+
+# Define functions for data cleaning
+## substrRight function returns last n letters
+substrRight <- function(x, n){
+  substr(x, nchar(x)-n+1, nchar(x))
+}
+
+## th function returns two values:
+### 1. boolean value whether a text 'x' has the 'pattern'
+### 2. the location where the pattern starts in the text 'x'
+th = function (x,pattern="\\d th "){
+  list(grepl(pattern, x),
+       regexpr(pattern,x)[1:length(x)])
+}
+
+valid_precincts = c(1, 5, 6, 7, 9, 10, 13, 14, 17, 18, 19, 20, 22, 23, 24, 25, 26, 28, 30, 32, 33, 34)
+
+nyc_man = nyc %>%
+  filter(Violation.Precinct %in% valid_precincts) %>%
+    # Make address lowercase first to get rid of case-sensitive cases
+  mutate(address = tolower(paste(House.Number, Street.Name))) %>%
+    # Make new columns to store boolean values.
+    ## 'st' is true if the last three letters of address is ' st', and so on
+    ## 'zr' is true if the first letter of address is '0'
+    ## 'th1' is true if the pattern '\\dth' is found in the address. Same for 'th2', 'st1', and so on
+  mutate(st = substrRight(address, 3) == " st", ave = substrRight(address, 4) == " ave",
+         dr = substrRight(address, 3) == " dr", pl = substrRight(address, 3) == " pl",
+         rd = substrRight(address, 3) == " rd", ln = substrRight(address, 3) == " ln",
+         ci = substrRight(address, 4) == " cir", plz = substrRight(address, 4) == " plz",
+         zr = substr(address, 1, 1) == "0", 
+         th1 = th(address, "\\dth")[[1]], th2 = th(address, "\\d th ")[[1]],
+         st1 = th(address, "\\dst")[[1]], st2 = th(address, "\\d st ")[[1]],
+         nd1 = th(address, "\\dnd")[[1]], 
+         rd1 = th(address, "\\drd")[[1]]) %>%
+    # Make changes in address. If 'st' is true, the last letters 'st' changes to 'street'
+    ## Same for 'st','ave','dr',...,'plz'
+  mutate(address = ifelse(st == TRUE, paste(substr(address,1,nchar(address)-2),"street",sep=""), address)) %>%
+  mutate(address = ifelse(ave == TRUE, paste(substr(address,1,nchar(address)-3),"avenue",sep=""), address)) %>%
+  mutate(address = ifelse(dr == TRUE, paste(substr(address,1,nchar(address)-2),"drive",sep=""), address)) %>%
+  mutate(address = ifelse(pl == TRUE, paste(substr(address,1,nchar(address)-2),"place",sep=""), address)) %>%
+  mutate(address = ifelse(rd == TRUE, paste(substr(address,1,nchar(address)-2),"road",sep=""), address)) %>%
+  mutate(address = ifelse(ln == TRUE, paste(substr(address,1,nchar(address)-2),"lane",sep=""), address)) %>%
+  mutate(address = ifelse(ci == TRUE, paste(substr(address,1,nchar(address)-3),"circle",sep=""), address)) %>%
+  mutate(address = ifelse(plz == TRUE, paste(substr(address,1,nchar(address)-3),"plaza",sep=""), address)) %>%
+    # Get rid of '0', if the address starts with '0'
+  mutate(address = ifelse(zr == TRUE, substr(address,2,nchar(address)), address)) %>%
+    # if a certain pattern, '\\dth', is found, remove 'th'
+    ## same for '1st', '2nd', '3rd'. '\\d th'
+  mutate(address = ifelse(th1 == TRUE, paste(substr(address,1,th(address, "\\dth")[[2]]),
+                                             substr(address,th(address, "\\dth")[[2]]+3,nchar(address)),sep=""),
+                          address)) %>%
+  mutate(address = ifelse(st1 == TRUE, paste(substr(address,1,th(address, "\\dst")[[2]]),
+                                             substr(address,th(address, "\\dst")[[2]]+3,nchar(address)),sep=""),
+                          address)) %>%
+  mutate(address = ifelse(nd1 == TRUE, paste(substr(address,1,th(address, "\\dnd")[[2]]),
+                                             substr(address,th(address, "\\dnd")[[2]]+3,nchar(address)),sep=""),
+                          address)) %>%
+  mutate(address = ifelse(rd1 == TRUE, paste(substr(address,1,th(address, "\\drd")[[2]]),
+                                             substr(address,th(address, "\\drd")[[2]]+3,nchar(address)),sep=""),
+                          address)) %>%
+  mutate(address = ifelse(th2 == TRUE, paste(substr(address,1,th(address, "\\d th ")[[2]]),
+                                             substr(address,th(address, "\\d th ")[[2]]+4,nchar(address)),sep=""),
+                          address)) %>%
+  
+  select(address, precinct = Violation.Precinct)
+
+# Replace abbreviations for 'west', 'east', 'south', 'north'
+nyc_man$address=str_replace_all(nyc_man$address, " w ", " west ")
+nyc_man$address=str_replace_all(nyc_man$address, " e ", " east ")
+nyc_man$address=str_replace_all(nyc_man$address, " s ", " south ")
+nyc_man$address=str_replace_all(nyc_man$address, " n ", " north ")
+
+# Replace abbreviations for ordinal numbers
+nyc_man$address=str_replace_all(nyc_man$address, " first ", " 1 ")
+nyc_man$address=str_replace_all(nyc_man$address, " second ", " 2 ")
+nyc_man$address=str_replace_all(nyc_man$address, " third ", " 3 ")
+nyc_man$address=str_replace_all(nyc_man$address, " fourth ", " 4 ")
+nyc_man$address=str_replace_all(nyc_man$address, " fifth ", " 5 ")
+nyc_man$address=str_replace_all(nyc_man$address, " sixth ", " 6 ")
+nyc_man$address=str_replace_all(nyc_man$address, " seventh ", " 7 ")
+nyc_man$address=str_replace_all(nyc_man$address, " eighth ", " 8 ")
+nyc_man$address=str_replace_all(nyc_man$address, " ninth ", " 9 ")
+nyc_man$address=str_replace_all(nyc_man$address, " tenth ", " 10 ")
+nyc_man$address=str_replace_all(nyc_man$address, " eleventh ", " 11 ")
+
+# Replace '\\davenue', '\\dave' to '\\d avenue'
+nyc_man$address=str_replace_all(nyc_man$address, "\\davenue", 
+                                paste(substr(nyc_man$address,th(nyc_man$address, "\\davenue")[[2]],th(nyc_man$address, "\\davenue")[[2]]),
+                                      "avenue"))
+nyc_man$address=str_replace_all(nyc_man$address, "\\dave", 
+                                paste(substr(nyc_man$address,th(nyc_man$address, "\\dave")[[2]],th(nyc_man$address, "\\dave")[[2]]),
+                                      "avenue"))
+# Replace '\\dstreet' to \\d street'
+nyc_man$address=str_replace_all(nyc_man$address, "\\dstreet", 
+                                paste(substr(nyc_man$address,th(nyc_man$address, "\\dstreet")[[2]],th(nyc_man$address, "\\dstreet")[[2]]),
+                                      "street"))
+
+# Replace irregular ordinal number cases
+nyc_man$address=str_replace_all(nyc_man$address, "1 st avenue", "1 avenue")
+nyc_man$address=str_replace_all(nyc_man$address, "1 st street", "1 street")
+nyc_man$address=str_replace_all(nyc_man$address, "2 nd avenue", "2 avenue")
+nyc_man$address=str_replace_all(nyc_man$address, "2 nd street", "2 street")
+nyc_man$address=str_replace_all(nyc_man$address, "3 rd avenue", "3 avenue")
+nyc_man$address=str_replace_all(nyc_man$address, "3 rd street", "3 street")
+
+# Replace abbreviation for broadway
+nyc_man$address=str_replace_all(nyc_man$address, "bway", "broadway")
+
+# Replace 'w.', 'e.', 'n.', 's.' to corresponding cardinal points
+# After that, make corrections for extra-space (two spaces) cases such as 'west  '
+nyc_man$address=str_replace_all(nyc_man$address, " w\\.", " west ")
+nyc_man$address=str_replace_all(nyc_man$address, " west  ", " west ")
+nyc_man$address=str_replace_all(nyc_man$address, " e\\.", " east ")
+nyc_man$address=str_replace_all(nyc_man$address, " east  ", " east ")
+nyc_man$address=str_replace_all(nyc_man$address, " n\\.", " north ")
+nyc_man$address=str_replace_all(nyc_man$address, " north  ", " north ")
+nyc_man$address=str_replace_all(nyc_man$address, " s\\.", " south ")
+nyc_man$address=str_replace_all(nyc_man$address, " south  ", " south ")
+
+# Replace abbreviation for 'ave', 'sq', 'pk', 'cpw' in the middle of a text
+nyc_man$address=str_replace_all(nyc_man$address, " ave ", " avenue ")
+nyc_man$address=str_replace_all(nyc_man$address, " sq ", " square ")
+nyc_man$address=str_replace_all(nyc_man$address, " pk ", " park ")
+nyc_man$address=str_replace_all(nyc_man$address, " cpw", " central park west")
+
+# Cleanup
+pluto_xy %<>% mutate(address = tolower(address))
+combined = inner_join(nyc_man, pluto_xy)
+
+# Make a central function
+## Returns 0 or 1. If the latitude and the longitude are in the Central Park,
+## it returns 1, Otherwise 0
+
+central = function(x,y){
+  # Define four different vertexes of the Central Park
+  ynw = 40.800121; yne = 40.796824
+  yse = 40.764487; ysw = 40.768252
+  xnw = -73.958124; xne = -73.949605
+  xse = -73.973000; xsw = -73.981525
+  
+  # Find four lines
+  ## Find four intercepts of lines
+  cnsw = ynw - (ynw-ysw)/(xnw-xsw) * xnw
+  cnse = yne - (yne-yse)/(xne-xse) * xne
+  cnwe = ynw - (ynw-yne)/(xnw-xne) * xnw
+  cswe = ysw - (ysw-yse)/(xsw-xse) * xsw
+  
+  ## If four conditions are satisfied, it returns 1, or 0
+  ((ynw-ysw)/(xnw-xsw) * x + cnsw > y) *
+    ((yne-yse)/(xne-xse) * x + cnse < y) *
+    ((ynw-yne)/(xnw-xne) * x + cnwe > y) *
+    ((ysw-yse)/(xsw-xse) * x + cswe < y) 
+}
+
+# Generate 30,000 random samples
+set.seed(1)
+x1 = runif(30000, min = -73.981525, max = -73.949605)
+y1 = runif(30000, min = 40.764487, max = 40.800121)
+
+# Select points satisfying the conditions
+cent_x = x1[which(central(x1,y1) == 1)]
+cent_y = y1[which(central(x1,y1) == 1)]
+
+# Update 'combined' file by adding points
+combined = rbind(combined, cbind(address = "", precinct = 22, x = cent_x, y = cent_y))
+combined$x = as.numeric(combined$x)
+combined$y = as.numeric(combined$y)
+combined$precinct = as.numeric(combined$precinct)
+
+save(combined, file="precinct.Rdata")
+```
+
+
+## Setup
+```{r message=FALSE}
+detach("package:dplyr", unload=TRUE)
+library(raster) # load before dplyr to avoid select bs
+library(dplyr)
+library(ggplot2)
+library(sf)
+
+# Load data
+load(file="precinct.Rdata")
+ggplot(combined, aes(x=x,y=y,color=factor(precinct))) + geom_point(size=0.1)
+```
+
+
+## Get Manhattan Info
+
+```{r}
+nybb = st_read("/data/nyc_parking/nybb/", quiet=TRUE)
+manh = nybb %>% filter(BoroName == "Manhattan")
+plot(manh,axes=TRUE)
+
+library(raster)
+ext = st_bbox(manh) %>% .[c("xmin","xmax","ymin","ymax")] %>% extent()
+r = raster(ext, ncol=150, nrow=350)
+
+# Leave everywhere outside Manhattan as NA and everywhere inside as 1
+r = rasterize(as(manh,"Spatial"),r)
+plot(r)
+```
+
+### Get prediction locations
+
+```{r}
+pred_cells = which(!is.na(r[]))
+pred_locs = xyFromCell(r, pred_cells) %>% as_data_frame()
+plot(pred_locs, pch=16, cex=0.1)
+```
+
+## Model 1 - xgboost
+
+```{r}
+# The following code is commented out since knn yields a better result and takes less time to run. But xgboost also gives a fairly good result and it is kept as a reference.
+
+#library(xgboost)
+#
+#precincts = factor(combined$precinct) %>% levels()
+#y = (factor(combined$precinct) %>% as.integer()) - 1L
+#x = combined %>% select(x,y) %>% as.matrix()
+#
+#m = xgboost(data=x, label=y, max_depth=20, eta=0.1, gamma=0, min_child_weight=0.5, nround=3, #objective="multi:softmax",  num_class=length(precincts))
+#
+#pred_xg = predict(m, newdata=as.matrix(pred_locs))
+#pred_xg = precincts[pred_xg+1]
+#ggplot(cbind(pred_locs, pred=pred_xg), aes(x=x,y=y,color=factor(pred))) +  geom_point()
+```
+
+## Model 2 - knn
+```{r}
+library(class)
+
+x = combined %>% select(x,y)
+y = combined$precinct
+
+# add some tiny random noise to x because there are too many equal distance and leads to many ties when running the knn model
+set.seed(1)
+random.stuff = matrix(runif(prod(dim(x)), min = -0.00001, max = 0.00001), nrow = nrow(x))
+x = x + random.stuff
+
+k1 = knn(x, pred_locs,y,25, use.all = FALSE)
+precincts = factor(combined$precinct) %>% levels()
+pred_knn = precincts[k1]
+ggplot(cbind(pred_locs, pred = pred_knn), aes(x = x,y = y,color = factor(pred))) + geom_point(size=0.1)
+```
+
+## Rasters -> Polygons
+
+```{r}
+r_knn = r
+r_knn[pred_cells] = as.numeric(pred_knn)
+```
+
+
+## Polygonize
+
+```{r}
+source("polygonizer.R")
+p = polygonizer(r_knn)
+p = st_transform(p, 4326)
+# plot boundary
+plot(p)
+
+st_write(p,"precincts.json", "data", driver="GeoJSON", quiet=TRUE)
+```
