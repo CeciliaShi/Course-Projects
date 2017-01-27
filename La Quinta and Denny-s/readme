@@ -1,0 +1,19 @@
+We scrape the La Quinta data from the mirror website provided in this class. We first specify the website url and then download the individual hotel page and save into the data/lq/ directory. When doing parsing, we specify the information we need from this website through selector gadget. In particular, we find out the html nodes by using the selector gadget and then use html_text() to display the information. We then need to clean up the text by using some functions from the “stringr” library.
+
+The information in the “hotels” data frame includes address, state, phone, fax, number of rooms, number of floors, latitude, longitude, internet service and swimming pool. In addition, we include a hotel in the data frame only if it is located in the US. This is done by checking if the hotel is located in one of the 50 US states. There are 890 hotels in the US.
+
+We scrape the Denny's data by identifying a city’s location using its zip code and searching the Denny's within a certain radius. We also set a limit for the number of data point we search. We set Durham and LA as two base cities for our search, and we search all the Denny's near Durham within a radius of 5000 miles, and all the Denny's near LA within a radius of 5000 miles. We also search for Denny's in Hawaii and Alaska. By using these four cities and setting a large radius, we make sure that we can obtain all Denny’s in the US. We then store the data in the required director path.
+
+When doing parsing for Denny’s, we extracted out the address, state, country, latitude, longitude and phone number. Then we filter out the Denny’s located in the US only and there are 1610 of them.
+
+When doing the distance analysis, we want to calculate every Denny's distance to every La Quinta's distance. We classify three levels of "closeness": 100 meters, 500 meters and 1000 meters. We first calculate a Denny's location, and then calculate its distance to every La Quinta's distance. We then count the number of Denny's within radii of 100 meters, 500 meters and 1000 meters. Then we create a data frame to store the hotels' states and the number of Denny's we counted previously with respect to each closeness (100, 500, and 1000 meters). Then we summarize the data frame by grouping by states to figure out the number of La Quinta hotels which have Denny's within 100 meters, 500 meters, and 1000 meters of radii centered at each La Quinta hotel. The column names of the data frame are as follows:
+
+n: Total number of La Quinta Hotels in each state. 
+n_lq_100: Number of hotels which has Denny's within a 100-meter radius 
+p_100: Proportion of hotels with Denny's in close proximity (100 meters) 
+n_lq_500: Number of hotels which has Denny's within a 500-meter radius 
+p_500: Proportion of hotels with Denny's in close proximity (500 meters) 
+n_lq_1000: Number of hotels which has Denny's within a 1000-meter radius 
+p_1000: Proportion of hotels with Denny's in close proximity (1000 meters) 
+
+We also add a row for margin information of each column. From this table, we can easily check the proportion of La Quinta hotels which have Denny's in close proximity to the total number of La Quinta hotels for each state. Within each 100, 500, and 1000 meters’ proximity, the national percentages of La Quinta hotels nearby Denny's are 3.37%, 13.8%, and 21.1% respectively. And some states such as CA, AZ, OH, etc. have percentages above the national average as to all the closeness.
